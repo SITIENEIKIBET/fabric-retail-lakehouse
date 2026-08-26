@@ -52,3 +52,42 @@ per docs/fabric-git-sync-workflow.md.
 CI/CD (GitHub Actions) will validate exported notebook/pipeline files on
 push, but cannot trigger deployments *into* Fabric automatically without
 the Fabric REST API (evaluated separately in the CI/CD phase).
+
+
+## ADR-003: Manual Upload to Lakehouse Files (instead of On-Premises Data Gateway)
+
+**Context:**
+Fabric notebooks execute in Microsoft's cloud and cannot reach localhost
+services (our Dockerized Postgres) or the local filesystem (our generated
+CSV/JSON files) directly.
+
+**Decision:**
+Export local sources to flat files (CSV/Parquet/JSON) and manually upload
+them to the Lakehouse's Files section in OneLake. The Bronze notebook reads
+from Files, not from live source connections.
+
+**Alternatives considered:**
+- On-premises Data Gateway: the production-correct tool for this exact
+  problem, but adds real setup overhead (local Windows service install,
+  recovery key management) and has documented connectivity reliability
+  issues specifically on trial capacity (error 9518, requiring gateway
+  version downgrades to resolve per community reports).
+- Exposing local Postgres publicly (e.g. via ngrok): rejected outright —
+  unnecessary security exposure for a local dev database with no
+  corresponding benefit for this project's goals.
+
+**Trade-offs:**
+- Manual upload means ingestion isn't "live" — each Bronze run reflects
+  whatever was last exported/uploaded, not real-time source state.
+- In a real production environment with a paid Fabric capacity, we would
+  use the On-premises Data Gateway or Fabric Mirroring for SQL sources
+  instead — this is explicitly a trial-environment adaptation, not the
+  production-recommended pattern.
+
+**Consequences:**
+The Bronze notebook's ingestion logic (retry, audit columns, schema
+handling) is written identically to how it would be against a live
+gateway-based source — only the entry point (Files vs. JDBC-over-gateway)
+differs. This keeps the pattern honestly transferable to a real Fabric
+capacity, and this ADR gives us the "how would this change in production"
+answer ready for interviews.
