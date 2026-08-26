@@ -25,3 +25,30 @@ Use Fabric Lakehouse with OneLake/Delta as the primary storage format.
 **Consequences:**
 All Bronze/Silver/Gold tables are Delta tables in OneLake. Gold layer remains
 queryable via both PySpark notebooks and the SQL analytics endpoint for Power BI.
+
+## ADR-002: Manual Fabric-to-Git Sync (instead of native Git integration)
+
+**Context:**
+Native Fabric Git integration requires either GitHub tenant-level enablement
+(not available on trial capacity) or Azure DevOps (requires an Azure
+subscription with card verification, unavailable in this environment).
+
+**Decision:**
+Use GitHub as the sole source-controlled repo. Sync Fabric artifacts
+(notebooks, pipeline JSON) manually via export/commit after each session,
+per docs/fabric-git-sync-workflow.md.
+
+**Alternatives considered:**
+- Azure DevOps native sync (blocked by card verification requirement)
+- GitHub native sync (blocked by trial capacity tenant restrictions)
+
+**Trade-offs:**
+- No automatic conflict detection between Fabric and Git state — discipline
+  is required to keep them in sync manually.
+- Loses Fabric's built-in branching-out/workspace-per-branch capability.
+- Gains full portability: this workflow works on any Fabric SKU, trial or paid.
+
+**Consequences:**
+CI/CD (GitHub Actions) will validate exported notebook/pipeline files on
+push, but cannot trigger deployments *into* Fabric automatically without
+the Fabric REST API (evaluated separately in the CI/CD phase).
