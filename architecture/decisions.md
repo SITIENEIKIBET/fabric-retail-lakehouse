@@ -91,3 +91,74 @@ gateway-based source — only the entry point (Files vs. JDBC-over-gateway)
 differs. This keeps the pattern honestly transferable to a real Fabric
 capacity, and this ADR gives us the "how would this change in production"
 answer ready for interviews.
+
+## ADR-004: Quarantine Instead of Drop for Data Quality Violations
+
+**Context:**
+Multiple Bronze sources contain deliberate data quality issues (duplicate
+customers, broken foreign key references, negative business-impossible
+values, stale references). A decision was needed on how Silver handles
+each violation type.
+
+**Decision:**
+Split violations into two handling strategies:
+- **Quarantine** (structural/referential violations, business-rule
+  violations): row is excluded from the Silver table but preserved in a
+  parallel `silver_quarantine_<table>` table with a `quarantine_reason`.
+- **Flag** (soft/non-fatal issues like missing email, missing rating,
+  unparseable date): row is kept in Silver with a boolean flag column
+  (e.g. `has_missing_email`).
+
+**Alternatives considered:**
+- Drop bad rows silently — rejected, since it destroys the ability to
+  investigate or report on data quality issues after the fact.
+- Reject the entire batch on any violation — rejected as too brittle for
+  a source that will always have some noise (e.g. legacy CSV exports).
+
+**Trade-offs:**
+- Quarantine tables add storage and pipeline complexity versus a simple
+  filter-and-drop approach.
+- Requires ongoing judgment calls about which issues are quarantine-worthy
+  versus flag-worthy — this project's rule of thumb: quarantine when the
+  row would corrupt downstream joins/aggregates (broken FK, impossible
+  values); flag when the row is still usable on its own.
+
+**Consequences:**
+Every Silver table transformation now logs into `silver_dq_log`, giving
+a queryable history of ingestion health per run — the foundation for the
+observability dashboards planned in Project 5.
+
+## ADR-006: SCD Type 2 via Delta MERGE-style Update + Append
+
+**Context:**
+`dim_customers` needed to track historical changes (e.g. city updates) so
+that "what did this customer look like at order time" remains answerable,
+per the project's SCD2 requirement.
+
+**Decision:**
+Implement SCD2 as a two-step Delta operation: (1) `DeltaTable.update()` to
+expire (`is_current=False`, set `effective_end_date`) any existing current
+row whose attributes changed, followed by (2) an `append` of new current
+rows for both changed and brand-new customers.
+
+**Alternatives considered:**
+- True Delta `MERGE INTO` with `WHEN MATCHED`/`WHEN NOT MATCHED` clauses:
+  more idiomatic and closer to what Fabric/Databricks documentation
+  typically shows; not used here mainly for pedagogical clarity of the
+  update/append split, though a production version would likely
+  consolidate into a single MERGE statement.
+
+**Trade-offs:**
+- Two-step approach requires careful ordering (expire before insert) and
+  is more exposed to bugs like premature re-evaluation of lazy DataFrames
+  against already-mutated table state (encountered and documented during
+  implementation — see troubleshooting notes).
+- A single `MERGE INTO` statement would be more atomic and less prone to
+  this specific class of bug.
+
+**Consequences:**
+`dim_customers` now carries full version history via `customer_key`
+(surrogate, unique per version) vs. `customer_id` (stable natural key).
+Any fact table join must use `customer_key`, not `customer_id`, to
+correctly attribute historical facts to the customer version that was
+current at the time.
