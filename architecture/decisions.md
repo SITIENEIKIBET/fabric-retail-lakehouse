@@ -162,3 +162,35 @@ rows for both changed and brand-new customers.
 Any fact table join must use `customer_key`, not `customer_id`, to
 correctly attribute historical facts to the customer version that was
 current at the time.
+
+## ADR-008: Delta Lake Time Travel as a Deliberate Auditing Tool
+
+**Context:**
+Throughout Phases 7B, we used Delta time travel reactively to recover
+from an accidental full-table overwrite. This ADR formalizes it as an
+intentional project capability rather than treating that as a one-off fix.
+
+**Decision:**
+Use `VERSION AS OF` / `TIMESTAMP AS OF` queries against Delta tables for
+auditing historical state and diffing changes over time, in addition to
+the SCD2 dimension logic already handling business-facing history.
+
+**Alternatives considered:**
+- Relying solely on SCD2 for history: SCD2 captures *business* history
+  (what a dimension looked like at a point in time) but not *pipeline*
+  history (every write operation, including mistakes, corrections, and
+  intermediate states) — time travel captures the latter, which SCD2
+  cannot.
+
+**Trade-offs:**
+- Delta's transaction log grows over time; without periodic `VACUUM`,
+  old file versions accumulate storage cost indefinitely. Production
+  systems set a retention window (e.g. 30 days) and vacuum beyond it —
+  we deliberately do NOT vacuum in this project, since we want full
+  history available for demonstration purposes.
+
+**Consequences:**
+Time travel and SCD2 serve complementary, not redundant, purposes:
+SCD2 answers "what did this customer look like when they placed this
+order" (business-time); time travel answers "what did this entire table
+look like last Tuesday, including any pipeline mistakes" (system-time).
