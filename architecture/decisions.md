@@ -194,3 +194,63 @@ Time travel and SCD2 serve complementary, not redundant, purposes:
 SCD2 answers "what did this customer look like when they placed this
 order" (business-time); time travel answers "what did this entire table
 look like last Tuesday, including any pipeline mistakes" (system-time).
+
+
+## ADR-009: Explicit Schema Evolution via mergeSchema
+
+**Context:**
+Bronze sources can change shape over time (e.g., a new column added
+upstream). Delta enforces schema matching by default, causing writes to
+fail when incoming data doesn't match the target table's schema.
+
+**Decision:**
+Treat schema mismatches as a deliberate decision point, not an automatic
+pass-through. Default behavior (no `mergeSchema` flag) correctly fails
+loudly; evolution only happens when explicitly requested via
+`option("mergeSchema", "true")`.
+
+**Alternatives considered:**
+- Always enabling `mergeSchema` by default on every write: rejected —
+  this would silently accept a renamed or retyped column as if it were
+  a new one, risking silent data corruption rather than a caught error.
+
+**Trade-offs:**
+- Requires a human (or an alerting mechanism) to notice the failure and
+  make an explicit decision to evolve — this is a deliberate friction
+  point, not an oversight.
+
+**Consequences:**
+`bronze_loyalty` now has a `referral_code` column; pre-change rows would
+show null for it if this had been a partial/incremental load, correctly
+representing that the field genuinely didn't exist for those records
+rather than inventing a fabricated default value.
+
+
+## ADR-009: Explicit Schema Evolution via mergeSchema
+
+**Context:**
+Bronze sources can change shape over time (e.g., a new column added
+upstream). Delta enforces schema matching by default, causing writes to
+fail when incoming data doesn't match the target table's schema.
+
+**Decision:**
+Treat schema mismatches as a deliberate decision point, not an automatic
+pass-through. Default behavior (no `mergeSchema` flag) correctly fails
+loudly; evolution only happens when explicitly requested via
+`option("mergeSchema", "true")`.
+
+**Alternatives considered:**
+- Always enabling `mergeSchema` by default on every write: rejected —
+  this would silently accept a renamed or retyped column as if it were
+  a new one, risking silent data corruption rather than a caught error.
+
+**Trade-offs:**
+- Requires a human (or an alerting mechanism) to notice the failure and
+  make an explicit decision to evolve — this is a deliberate friction
+  point, not an oversight.
+
+**Consequences:**
+`bronze_loyalty` now has a `referral_code` column; pre-change rows would
+show null for it if this had been a partial/incremental load, correctly
+representing that the field genuinely didn't exist for those records
+rather than inventing a fabricated default value.
