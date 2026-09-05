@@ -1,0 +1,12 @@
+name: 'retail_marts'
+version: '1.0.0'
+config-version: 2
+
+profile: 'retail_marts'
+
+model-paths: ["models"]
+test-paths: ["tests"]
+
+models:
+  retail_marts:
+    +materialized: view

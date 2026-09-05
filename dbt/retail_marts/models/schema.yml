@@ -1,0 +1,24 @@
+version: 2
+
+models:
+  - name: customer_order_summary
+    description: >
+      Customer-level order summary built on top of the Gold star schema.
+      One row per current customer, showing total orders, total spend,
+      and most recent order date.
+    columns:
+      - name: customer_id
+        description: Natural key of the customer (from dim_customers).
+        data_tests:
+          - not_null
+          - unique
+
+      - name: total_orders
+        description: Count of distinct orders placed by this customer.
+        data_tests:
+          - not_null
+
+      - name: total_spend
+        description: Sum of line_total across all this customer's order items.
+        data_tests:
+          - not_null

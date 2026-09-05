@@ -254,3 +254,125 @@ loudly; evolution only happens when explicitly requested via
 show null for it if this had been a partial/incremental load, correctly
 representing that the field genuinely didn't exist for those records
 rather than inventing a fabricated default value.
+
+
+## ADR-011: Wait Activities Between Pipeline Notebook Steps (Trial Capacity Mitigation)
+
+**Context:**
+Chaining 4 notebook activities in a Data Factory pipeline on Fabric trial
+capacity (FT1) reliably triggers HTTP 430 TooManyRequestsForCapacity,
+since each activity spins up a fresh Spark session with minimal gap
+between the previous session's teardown and the next one's creation.
+
+**Decision:**
+Insert explicit Wait activities (60-90s) between each Notebook activity
+in the orchestration pipeline, giving Spark sessions time to fully
+release capacity before the next one is requested.
+
+**Alternatives considered:**
+- Upgrading to a paid Fabric capacity: would eliminate the constraint
+  entirely, but violates this project's explicit cost-control requirement
+  (Fabric 60-day trial, no unnecessary cloud spend).
+- Combining all 4 notebooks into a single notebook (one Spark session
+  for everything): would resolve the capacity issue but destroys the
+  clean separation of concerns (Bronze/Silver/Gold/CDC as independently
+  testable, independently re-runnable units) that the rest of this
+  project deliberately maintains.
+
+**Trade-offs:**
+- Adds ~3-5 minutes of pure wait time to every pipeline run — acceptable
+  for a daily batch schedule, would NOT be acceptable for a
+  low-latency/near-real-time requirement.
+- This is a trial-capacity-specific mitigation; a production Fabric
+  capacity (F64+) would not need these waits, since it has enough
+  concurrent Spark VCores to run chained sessions back-to-back.
+
+**Consequences:**
+The orchestration pipeline is now: Bronze → Wait → Silver → Wait → Gold
+→ Wait → CDC. This is explicitly documented as a trial-environment
+adaptation, not a production pattern — worth stating clearly in an
+interview if asked why waits are hardcoded into the pipeline.
+
+
+## ADR-012: overwriteSchema Instead of DROP TABLE for Silver Schema Changes
+
+**Context:**
+After bronze_loyalty gained a referral_code column via mergeSchema
+(Phase 7F), silver_loyalty's mode("overwrite") write began failing with
+a schema mismatch, since Delta enforces schema matching on overwrite by
+default, same as it does on append.
+
+**Decision:**
+Use .option("overwriteSchema", "true") on the write instead of dropping
+and recreating the table.
+
+**Alternatives considered:**
+- DROP TABLE IF EXISTS before each write: works, but destroys the
+  table's entire Delta version history (time travel) on every run,
+  directly undermining the auditing capability established in ADR-008.
+
+**Consequences:**
+silver_loyalty now retains full version history across schema changes,
+consistent with how the rest of the project treats Delta's transaction
+log as a deliberate asset, not disposable state.
+
+
+## ADR-013: Fabric Data Factory Pipeline Orchestration with Wait-Based Capacity Mitigation
+
+**Context:**
+The four-notebook medallion pipeline (Bronze→Silver→Gold→CDC) needed
+end-to-end orchestration with dynamic date parameters and a daily
+schedule, replacing manual notebook-by-notebook execution.
+
+**Decision:**
+Built a single Fabric Data Factory pipeline chaining all 4 notebook
+activities via "On Success" dependencies, each receiving processing_date
+dynamically via @formatDateTime(pipeline().TriggerTime, 'yyyy-MM-dd'),
+with Wait activities (90s) inserted between each notebook activity to
+mitigate trial-capacity Spark session contention (see ADR-011).
+
+**What we validated in practice:**
+- First full run failed at Run_Silver with HTTP 430 (capacity) — resolved
+  by adding Wait activities.
+- Second full run succeeded through Bronze/Silver but failed at Run_Gold
+  with a generic transient platform error (1.3s duration, "Something
+  went wrong on our end") — resolved simply by retrying, confirming it
+  was a genuine transient backend issue rather than a design flaw.
+- Third full run succeeded end-to-end: Bronze → Silver → Gold → CDC,
+  all green.
+
+**Consequences:**
+The pipeline is schedulable and does not require any hardcoded dates —
+tomorrow's scheduled run will automatically process tomorrow's date via
+the dynamic expression, with no manual notebook edits required. This is
+the direct payoff of the Phase 8A parameterization work.
+
+
+## ADR-014: dbt-fabric via SQL Analytics Endpoint (CLI Authentication, Tenant-Level)
+
+**Context:**
+Needed to connect dbt-core locally to the Fabric Lakehouse for a
+SQL-based analytics engineering marts layer on top of Gold. The Lakehouse
+SQL analytics endpoint is read-only (views only, not tables) — a real
+architectural constraint, not a dbt limitation.
+
+**Decision:**
+Use the dbt-fabric adapter against the SQL analytics endpoint, with
+CLI-based authentication via Azure CLI, connected at the tenant level
+(no Azure subscription required — consistent with this project's
+trial-capacity, no-billing-account constraints established in ADR-002/003).
+
+**Trade-offs:**
+- Getting `az login` to establish a valid CLI credential without an Azure
+  subscription required the device-code flow and explicit tenant
+  selection — more setup friction than a typical subscription-backed
+  account, but confirms the whole project can run on a genuinely
+  cost-free setup end to end.
+- All dbt models here materialize as views, not tables, since the SQL
+  endpoint cannot create tables (only Spark/OneLake writes can).
+
+**Consequences:**
+dbt is scoped specifically to a BI-facing marts layer on top of
+Gold — not a Bronze/Silver/Gold replacement — consistent with the
+decision in the Phase 8C introduction about where dbt genuinely fits
+versus where Spark remains the right tool.
