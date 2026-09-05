@@ -22,3 +22,22 @@ models:
         description: Sum of line_total across all this customer's order items.
         data_tests:
           - not_null
+  - name: revenue_by_category
+    description: >
+      Monthly revenue, order count, and units sold by product category.
+      Built on top of the Gold star schema (fact_orders + dim_products).
+    columns:
+      - name: category
+        description: Product category from dim_products.
+        data_tests:
+          - not_null
+
+      - name: revenue_month
+        description: First day of the month the revenue was recorded in.
+        data_tests:
+          - not_null
+
+      - name: total_revenue
+        description: Sum of line_total for this category and month.
+        data_tests:
+          - not_null
